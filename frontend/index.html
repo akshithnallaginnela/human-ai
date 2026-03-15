@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Human Activity Detection</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;600;800&display=swap" rel="stylesheet"/>
+<style>
+  /* ── Reset & Variables ──────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #050d12;
+    --surface:   #0c1a22;
+    --card:      #0f2330;
+    --border:    #1a3a4d;
+    --accent:    #00ffe1;
+    --accent2:   #ff6b35;
+    --accent3:   #7c3aed;
+    --text:      #e0f4f7;
+    --muted:     #5a8a98;
+    --success:   #22c55e;
+    --warning:   #f59e0b;
+    --danger:    #ef4444;
+    --glow:      0 0 20px rgba(0,255,225,0.3);
+    --glow2:     0 0 20px rgba(255,107,53,0.3);
+    --font-mono: 'Space Mono', monospace;
+    --font-body: 'DM Sans', sans-serif;
+  }
+
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,255,225,.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,255,225,.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0 32px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .logo-icon {
+    width: 44px; height: 44px;
+    background: linear-gradient(135deg, var(--accent), var(--accent3));
+    border-radius: 12px;
+    display: grid; place-items: center;
+    font-size: 22px;
+    box-shadow: var(--glow);
+  }
+  .logo-text h1 {
+    font-family: var(--font-mono);
+    font-size: 1.1rem; font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .logo-text p {
+    font-size: 0.75rem; color: var(--muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
+  }
+  .header-status {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 8px var(--danger);
+    transition: all .3s;
+  }
+  .status-dot.live {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+    animation: pulse-dot 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%,100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.4); opacity: .7; }
+  }
+
+  /* ── Grid ────────────────────────────────────────────── */
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: auto auto;
+    gap: 20px;
+  }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: 1fr; }
+  }
+
+  /* ── Card ────────────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+  }
+  .card-header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--muted);
+  }
+  .card-header .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+  }
+
+  /* ── Camera Panel ────────────────────────────────────── */
+  .camera-panel { grid-row: 1 / 3; }
+
+  .video-container {
+    position: relative;
+    background: #000;
+    aspect-ratio: 4/3;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  #video {
+    width: 100%; height: 100%; object-fit: cover;
+    transform: scaleX(-1);    /* mirror for natural selfie feel */
+    display: block;
+  }
+  #canvas { display: none; }
+
+  #annotated-overlay {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity .2s;
+  }
+  #annotated-overlay.visible { opacity: 1; }
+
+  .video-placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; color: var(--muted);
+    font-family: var(--font-mono); font-size: .85rem;
+  }
+  .video-placeholder .icon { font-size: 3rem; opacity: .4; }
+
+  /* Corner scan lines */
+  .scan-corner {
+    position: absolute;
+    width: 24px; height: 24px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0;
+    transition: opacity .4s;
+  }
+  .scan-corner.tl { top:10px; left:10px;  border-width: 2px 0 0 2px; }
+  .scan-corner.tr { top:10px; right:10px; border-width: 2px 2px 0 0; }
+  .scan-corner.bl { bottom:10px; left:10px;  border-width: 0 0 2px 2px; }
+  .scan-corner.br { bottom:10px; right:10px; border-width: 0 2px 2px 0; }
+  .video-container.active .scan-corner { opacity: 1; }
+
+  /* Scanning line animation */
+  .scan-line {
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    top: 0;
+    opacity: 0;
+    animation: none;
+  }
+  .video-container.active .scan-line {
+    opacity: .6;
+    animation: scan 3s linear infinite;
+  }
+  @keyframes scan {
+    0%   { top: 0%; }
+    100% { top: 100%; }
+  }
+
+  /* ── Activity Badge ──────────────────────────────────── */
+  .activity-badge {
+    position: absolute; bottom: 16px; left: 16px; right: 16px;
+    background: rgba(5,13,18,.85);
+    backdrop-filter: blur(8px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex; align-items: center; gap: 14px;
+    transform: translateY(60px);
+    transition: transform .4s cubic-bezier(.34,1.56,.64,1), opacity .3s;
+    opacity: 0;
+  }
+  .activity-badge.visible { transform: translateY(0); opacity: 1; }
+
+  .activity-emoji { font-size: 2rem; line-height: 1; }
+  .activity-info { flex: 1; min-width: 0; }
+  .activity-name {
+    font-family: var(--font-mono); font-size: 1rem;
+    font-weight: 700; color: var(--accent);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .activity-conf {
+    font-size: .75rem; color: var(--muted);
+    font-family: var(--font-mono); margin-top: 3px;
+  }
+
+  .conf-bar-wrap {
+    width: 80px; flex-shrink: 0;
+  }
+  .conf-bar {
+    height: 4px; background: var(--border); border-radius: 2px; overflow: hidden;
+  }
+  .conf-fill {
+    height: 100%; background: linear-gradient(90deg, var(--accent3), var(--accent));
+    border-radius: 2px;
+    transition: width .4s ease;
+    width: 0%;
+  }
+  .conf-pct {
+    font-family: var(--font-mono); font-size: .7rem;
+    color: var(--accent); text-align: right; margin-top: 4px;
+  }
+
+  /* ── Controls ────────────────────────────────────────── */
+  .controls {
+    padding: 16px 20px;
+    display: flex; gap: 10px; flex-wrap: wrap;
+  }
+  .btn {
+    font-family: var(--font-mono); font-size: .78rem;
+    font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+    padding: 10px 20px; border-radius: 8px; border: none; cursor: pointer;
+    transition: all .2s; position: relative; overflow: hidden;
+  }
+  .btn::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: rgba(255,255,255,.08);
+    opacity: 0; transition: opacity .2s;
+  }
+  .btn:hover::after { opacity: 1; }
+  .btn:active { transform: scale(.97); }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+    box-shadow: var(--glow);
+  }
+  .btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    box-shadow: 0 0 12px rgba(239,68,68,.2);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+  }
+  .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+  /* ── Stats Panel ─────────────────────────────────────── */
+  .stat-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 1px; background: var(--border);
+  }
+  .stat-cell {
+    background: var(--card);
+    padding: 16px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .stat-label {
+    font-family: var(--font-mono); font-size: .65rem;
+    text-transform: uppercase; letter-spacing: .1em;
+    color: var(--muted);
+  }
+  .stat-value {
+    font-family: var(--font-mono); font-size: 1.4rem;
+    font-weight: 700; color: var(--accent);
+    line-height: 1;
+  }
+  .stat-value.orange { color: var(--accent2); }
+  .stat-value.purple { color: #a78bfa; }
+
+  /* ── History Panel ───────────────────────────────────── */
+  .history-list {
+    padding: 8px 0;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .history-list::-webkit-scrollbar { width: 4px; }
+  .history-list::-webkit-scrollbar-track { background: var(--card); }
+  .history-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .history-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 20px;
+    border-bottom: 1px solid rgba(26,58,77,.5);
+    animation: slide-in .3s ease;
+    transition: background .2s;
+  }
+  .history-item:hover { background: rgba(0,255,225,.03); }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .history-emoji { font-size: 1.1rem; width: 24px; text-align: center; }
+  .history-details { flex: 1; min-width: 0; }
+  .history-act {
+    font-family: var(--font-mono); font-size: .78rem;
+    color: var(--text); font-weight: 700;
+  }
+  .history-time {
+    font-size: .68rem; color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .history-bar {
+    width: 50px; height: 3px; border-radius: 2px; overflow: hidden;
+    background: var(--border);
+  }
+  .history-fill {
+    height: 100%; background: var(--accent);
+    transition: width .3s;
+  }
+
+  .empty-history {
+    padding: 32px 20px; text-align: center;
+    font-family: var(--font-mono); font-size: .78rem;
+    color: var(--muted); opacity: .5;
+  }
+
+  /* ── Activity Distribution ───────────────────────────── */
+  .dist-list { padding: 12px 20px; display: flex; flex-direction: column; gap: 10px; }
+  .dist-row { display: flex; align-items: center; gap: 10px; }
+  .dist-label {
+    font-family: var(--font-mono); font-size: .72rem;
+    color: var(--text); width: 110px; flex-shrink: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dist-track {
+    flex: 1; height: 6px; background: var(--border);
+    border-radius: 3px; overflow: hidden;
+  }
+  .dist-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width .6s ease;
+  }
+  .dist-count {
+    font-family: var(--font-mono); font-size: .68rem;
+    color: var(--muted); width: 30px; text-align: right;
+  }
+
+  /* ── Connection indicator ────────────────────────────── */
+  .api-badge {
+    font-family: var(--font-mono); font-size: .7rem;
+    padding: 4px 10px; border-radius: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid;
+  }
+  .api-badge.ok   { color: var(--success); border-color: var(--success); background: rgba(34,197,94,.08); }
+  .api-badge.err  { color: var(--danger);  border-color: var(--danger);  background: rgba(239,68,68,.08); }
+  .api-badge.warn { color: var(--warning); border-color: var(--warning); background: rgba(245,158,11,.08); }
+  .api-badge .icon { font-size: .9rem; }
+
+  /* ── FPS meter ───────────────────────────────────────── */
+  .fps-badge {
+    position: absolute; top: 12px; right: 12px;
+    font-family: var(--font-mono); font-size: .7rem;
+    background: rgba(5,13,18,.8);
+    border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 8px;
+    color: var(--accent); letter-spacing: .05em;
+    opacity: 0; transition: opacity .3s;
+  }
+  .video-container.active .fps-badge { opacity: 1; }
+
+  /* ── Toast ───────────────────────────────────────────── */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 20px; font-family: var(--font-mono); font-size: .8rem;
+    color: var(--text); z-index: 100;
+    transition: transform .3s cubic-bezier(.34,1.56,.64,1);
+    pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* ── Footer ──────────────────────────────────────────── */
+  footer {
+    margin-top: 32px; padding-top: 20px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--font-mono); font-size: .7rem; color: var(--muted);
+    flex-wrap: wrap; gap: 10px;
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🤖</div>
+      <div class="logo-text">
+        <h1>ActivityVision</h1>
+        <p>Human Activity Detection System v1.0</p>
+      </div>
+    </div>
+    <div class="header-status">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-label">CAMERA OFFLINE</span>
+      &nbsp;|&nbsp;
+      <span id="api-status-badge" class="api-badge warn"><span class="icon">⚡</span>API: Checking…</span>
+    </div>
+  </header>
+
+  <!-- Main Grid -->
+  <div class="grid">
+
+    <!-- Camera Panel -->
+    <div class="card camera-panel">
+      <div class="card-header"><div class="dot"></div>Live Camera Feed</div>
+
+      <div class="video-container" id="video-container">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        <img id="annotated-overlay" alt="annotated" />
+
+        <!-- Overlays -->
+        <div class="scan-corner tl"></div>
+        <div class="scan-corner tr"></div>
+        <div class="scan-corner bl"></div>
+        <div class="scan-corner br"></div>
+        <div class="scan-line"></div>
+        <div class="fps-badge" id="fps-badge">-- FPS</div>
+
+        <div class="video-placeholder" id="placeholder">
+          <div class="icon">📷</div>
+          <span>Click "Start Camera" to begin</span>
+        </div>
+
+        <div class="activity-badge" id="activity-badge">
+          <div class="activity-emoji" id="act-emoji">🧍</div>
+          <div class="activity-info">
+            <div class="activity-name" id="act-name">Standing</div>
+            <div class="activity-conf" id="act-conf">Confidence: 0%</div>
+          </div>
+          <div class="conf-bar-wrap">
+            <div class="conf-bar"><div class="conf-fill" id="conf-fill"></div></div>
+            <div class="conf-pct" id="conf-pct">0%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button class="btn btn-primary" id="btn-start">▶ Start Camera</button>
+        <button class="btn btn-danger" id="btn-stop" disabled>■ Stop</button>
+        <button class="btn btn-ghost" id="btn-reset">↺ Reset Stats</button>
+        <button class="btn btn-ghost" id="btn-toggle-overlay" disabled>👁 Skeleton: ON</button>
+      </div>
+    </div>
+
+    <!-- Stats Panel -->
+    <div class="card">
+      <div class="card-header"><div class="dot"></div>Session Stats</div>
+      <div class="stat-grid">
+        <div class="stat-cell">
+          <div class="stat-label">Frames</div>
+          <div class="stat-value" id="stat-frames">0</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Detections</div>
+          <div class="stat-value orange" id="stat-detections">0</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Current FPS</div>
+          <div class="stat-value purple" id="stat-fps">0</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Avg Confidence</div>
+          <div class="stat-value" id="stat-conf">0%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Distribution -->
+    <div class="card">
+      <div class="card-header"><div class="dot"></div>Activity Distribution</div>
+      <div class="dist-list" id="dist-list">
+        <div style="padding:20px;text-align:center;font-family:var(--font-mono);font-size:.75rem;color:var(--muted);">
+          No data yet — start detection
+        </div>
+      </div>
+    </div>
+
+    <!-- History Panel -->
+    <div class="card" style="grid-column: 2;">
+      <div class="card-header"><div class="dot"></div>Detection History</div>
+      <div class="history-list" id="history-list">
+        <div class="empty-history">No detections yet</div>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <span>MediaPipe Pose + Rule-based Classification</span>
+    <span id="api-url-label">API: http://localhost:5000</span>
+    <span id="frame-counter">Frames: 0 | Detections: 0</span>
+  </footer>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const API_BASE      = 'http://localhost:5000';
+const DETECT_INTERVAL_MS = 150;   // send frame every ~150ms (~6 fps to server)
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let stream          = null;
+let detectTimer     = null;
+let isRunning       = false;
+let showOverlay     = true;
+let frameCount      = 0;
+let detectionCount  = 0;
+let confidenceSum   = 0;
+let lastFrameTime   = performance.now();
+let fpsBuffer       = [];
+let activityCounts  = {};
+
+// ── DOM Refs ──────────────────────────────────────────────────────────────────
+const video           = document.getElementById('video');
+const canvas          = document.getElementById('canvas');
+const ctx             = canvas.getContext('2d');
+const annotatedImg    = document.getElementById('annotated-overlay');
+const videoContainer  = document.getElementById('video-container');
+const placeholder     = document.getElementById('placeholder');
+const activityBadge   = document.getElementById('activity-badge');
+const actEmoji        = document.getElementById('act-emoji');
+const actName         = document.getElementById('act-name');
+const actConf         = document.getElementById('act-conf');
+const confFill        = document.getElementById('conf-fill');
+const confPct         = document.getElementById('conf-pct');
+const historyList     = document.getElementById('history-list');
+const distList        = document.getElementById('dist-list');
+const statusDot       = document.getElementById('status-dot');
+const statusLabel     = document.getElementById('status-label');
+const fpsBadge        = document.getElementById('fps-badge');
+const btnStart        = document.getElementById('btn-start');
+const btnStop         = document.getElementById('btn-stop');
+const btnReset        = document.getElementById('btn-reset');
+const btnOverlay      = document.getElementById('btn-toggle-overlay');
+const statFrames      = document.getElementById('stat-frames');
+const statDetections  = document.getElementById('stat-detections');
+const statFps         = document.getElementById('stat-fps');
+const statConf        = document.getElementById('stat-conf');
+const frameCounter    = document.getElementById('frame-counter');
+const apiStatusBadge  = document.getElementById('api-status-badge');
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
+}
+
+// ── API Health Check ──────────────────────────────────────────────────────────
+async function checkApi() {
+  try {
+    const r = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      apiStatusBadge.className = 'api-badge ok';
+      apiStatusBadge.innerHTML = '<span class="icon">✓</span> API: Connected';
+      return true;
+    } else { throw new Error(); }
+  } catch {
+    apiStatusBadge.className = 'api-badge err';
+    apiStatusBadge.innerHTML = '<span class="icon">✗</span> API: Offline';
+    return false;
+  }
+}
+
+// On startup: show 'Connecting' and retry every 3s for up to 30s before giving up
+(async function initApiCheck() {
+  apiStatusBadge.className = 'api-badge warn';
+  apiStatusBadge.innerHTML = '<span class="icon">⚡</span> API: Connecting…';
+  let connected = false;
+  for (let i = 0; i < 10; i++) {
+    connected = await checkApi();
+    if (connected) break;
+    await new Promise(res => setTimeout(res, 3000));
+  }
+  // After initial attempts, keep polling every 10s
+  setInterval(checkApi, 10000);
+})();
+
+// ── Camera ────────────────────────────────────────────────────────────────────
+btnStart.addEventListener('click', startCamera);
+btnStop.addEventListener('click', stopCamera);
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    placeholder.style.display = 'none';
+    videoContainer.classList.add('active');
+    statusDot.classList.add('live');
+    statusLabel.textContent = 'LIVE';
+    btnStart.disabled = true;
+    btnStop.disabled  = false;
+    btnOverlay.disabled = false;
+    isRunning = true;
+
+    canvas.width  = video.videoWidth  || 640;
+    canvas.height = video.videoHeight || 480;
+
+    toast('📷 Camera started — detecting activities...');
+    startDetection();
+  } catch (e) {
+    toast('❌ Camera access denied: ' + e.message);
+  }
+}
+
+function stopCamera() {
+  isRunning = false;
+  clearInterval(detectTimer);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null;
+
+  video.srcObject = null;
+  annotatedImg.classList.remove('visible');
+  activityBadge.classList.remove('visible');
+  videoContainer.classList.remove('active');
+  placeholder.style.display = '';
+  statusDot.classList.remove('live');
+  statusLabel.textContent = 'CAMERA OFFLINE';
+  btnStart.disabled  = false;
+  btnStop.disabled   = true;
+  btnOverlay.disabled = true;
+  toast('■ Camera stopped');
+}
+
+// ── Detection Loop ────────────────────────────────────────────────────────────
+function startDetection() {
+  detectTimer = setInterval(detectFrame, DETECT_INTERVAL_MS);
+}
+
+async function detectFrame() {
+  if (!isRunning || video.readyState < 2) return;
+
+  // Measure FPS
+  const now = performance.now();
+  const dt  = now - lastFrameTime;
+  lastFrameTime = now;
+  fpsBuffer.push(1000 / dt);
+  if (fpsBuffer.length > 10) fpsBuffer.shift();
+  const fps = Math.round(fpsBuffer.reduce((a, b) => a + b, 0) / fpsBuffer.length);
+  fpsBadge.textContent = `${fps} FPS`;
+  statFps.textContent = fps;
+
+  // Capture frame
+  canvas.width  = video.videoWidth;
+  canvas.height = video.videoHeight;
+  ctx.save();
+  ctx.scale(-1, 1);          // flip to match mirrored video
+  ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  const b64 = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+
+  try {
+    const r = await fetch(`${API_BASE}/detect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: b64 }),
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (!r.ok) return;
+    const data = await r.json();
+    if (data.error) return;
+
+    frameCount++;
+    updateDisplay(data);
+  } catch { /* silently ignore network errors */ }
+}
+
+// ── Display Update ────────────────────────────────────────────────────────────
+function updateDisplay(data) {
+  const { activity, confidence, emoji, annotated_image, history } = data;
+
+  // Badge
+  actEmoji.textContent = emoji || '❓';
+  actName.textContent  = activity || 'Unknown';
+  const pct = Math.round((confidence || 0) * 100);
+  actConf.textContent  = `Confidence: ${pct}%`;
+  confFill.style.width = `${pct}%`;
+  confPct.textContent  = `${pct}%`;
+  activityBadge.classList.add('visible');
+
+  // Annotated overlay
+  if (showOverlay && annotated_image) {
+    annotatedImg.src = annotated_image;
+    annotatedImg.classList.add('visible');
+  } else {
+    annotatedImg.classList.remove('visible');
+  }
+
+  // Stats
+  if (activity && activity !== 'No Person Detected') {
+    detectionCount++;
+    confidenceSum += (confidence || 0);
+    activityCounts[activity] = (activityCounts[activity] || 0) + 1;
+  }
+
+  statFrames.textContent     = frameCount;
+  statDetections.textContent = detectionCount;
+  const avgConf = detectionCount > 0 ? Math.round(confidenceSum / detectionCount * 100) : 0;
+  statConf.textContent = `${avgConf}%`;
+  frameCounter.textContent   = `Frames: ${frameCount} | Detections: ${detectionCount}`;
+
+  // History
+  if (history && history.length) updateHistory(history);
+
+  // Distribution
+  updateDistribution();
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+let lastActivity = '';
+
+function updateHistory(history) {
+  const latest = history[history.length - 1];
+  if (!latest || latest.activity === lastActivity) return;
+  lastActivity = latest.activity;
+
+  // Remove empty state
+  const empty = historyList.querySelector('.empty-history');
+  if (empty) empty.remove();
+
+  const ts = new Date(latest.timestamp * 1000).toLocaleTimeString();
+  const item = document.createElement('div');
+  item.className = 'history-item';
+  const pct = Math.round((latest.confidence || 0) * 100);
+  item.innerHTML = `
+    <div class="history-emoji">${latest.emoji}</div>
+    <div class="history-details">
+      <div class="history-act">${latest.activity}</div>
+      <div class="history-time">${ts} · Frame ${latest.frame}</div>
+    </div>
+    <div class="history-bar">
+      <div class="history-fill" style="width:${pct}%"></div>
+    </div>
+  `;
+  historyList.prepend(item);
+
+  // Cap at 20 items
+  while (historyList.children.length > 20) historyList.lastElementChild.remove();
+}
+
+// ── Distribution ──────────────────────────────────────────────────────────────
+const DIST_COLORS = ['#00ffe1','#7c3aed','#ff6b35','#f59e0b','#22c55e','#06b6d4','#ec4899'];
+
+function updateDistribution() {
+  const entries = Object.entries(activityCounts).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) return;
+
+  const total = entries.reduce((s, [, v]) => s + v, 0);
+  distList.innerHTML = entries.map(([act, cnt], i) => {
+    const pct  = Math.round(cnt / total * 100);
+    const col  = DIST_COLORS[i % DIST_COLORS.length];
+    const emoji = getEmoji(act);
+    return `
+      <div class="dist-row">
+        <div class="dist-label">${emoji} ${act}</div>
+        <div class="dist-track">
+          <div class="dist-fill" style="width:${pct}%;background:${col}"></div>
+        </div>
+        <div class="dist-count">${cnt}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function getEmoji(act) {
+  const map = {
+    'Standing':'🧍','Sitting':'🪑','Walking':'🚶','Running':'🏃',
+    'Squatting':'🏋️','Lying Down':'🛌','Arms Raised':'🙌','Push-up':'💪',
+    'Unknown':'❓','No Person Detected':'👁️'
+  };
+  return map[act] || '🤸';
+}
+
+// ── Overlay Toggle ────────────────────────────────────────────────────────────
+btnOverlay.addEventListener('click', () => {
+  showOverlay = !showOverlay;
+  btnOverlay.textContent = `👁 Skeleton: ${showOverlay ? 'ON' : 'OFF'}`;
+  if (!showOverlay) annotatedImg.classList.remove('visible');
+});
+
+// ── Reset ─────────────────────────────────────────────────────────────────────
+btnReset.addEventListener('click', async () => {
+  frameCount = detectionCount = confidenceSum = 0;
+  fpsBuffer  = [];
+  activityCounts = {};
+  lastActivity   = '';
+
+  statFrames.textContent = statDetections.textContent = statFps.textContent = '0';
+  statConf.textContent   = '0%';
+  historyList.innerHTML  = '<div class="empty-history">No detections yet</div>';
+  distList.innerHTML     = '<div style="padding:20px;text-align:center;font-family:var(--font-mono);font-size:.75rem;color:var(--muted);">No data yet — start detection</div>';
+  activityBadge.classList.remove('visible');
+  frameCounter.textContent = 'Frames: 0 | Detections: 0';
+
+  try { await fetch(`${API_BASE}/reset`, { method: 'POST' }); } catch {}
+  toast('↺ Session reset');
+});
+</script>
+</body>
+</html>
